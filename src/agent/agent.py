@@ -1,34 +1,44 @@
+import asyncio
 import json
 
 from dotenv import load_dotenv
-from loguru import logger
 from livekit import agents
-from livekit.agents import AgentSession, JobContext, Agent, RunContext, function_tool
+from livekit.agents import Agent, AgentSession, JobContext, RunContext, function_tool
 from livekit.plugins import deepgram, groq, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from loguru import logger
 
-from config import DEFAULT_PATIENT, HEALTH_QUESTIONS
-from prompts import GREETING_PROMPT, SYSTEM_PROMPT
+from agent.config import DEFAULT_PATIENT, HEALTH_QUESTIONS
+from agent.prompts import GREETING_PROMPT, SYSTEM_PROMPT
+from db.database import async_session
+from db.repositories import CallRepository
 
 load_dotenv(".env.local")
 
 VALID_OUTCOMES = {
-    "completed", "incomplete", "opted_out",
-    "scheduled", "escalated", "wrong_number", "voicemail",
+    "completed",
+    "incomplete",
+    "opted_out",
+    "scheduled",
+    "escalated",
+    "wrong_number",
+    "voicemail",
 }
 
 
 class CareCaller(Agent):
-    def __init__(self, patient: dict) -> None:
+    def __init__(self, patient: dict, call_id: str | None = None) -> None:
         super().__init__(
             instructions=SYSTEM_PROMPT.format(**patient),
         )
         self.patient = patient
+        self.call_id = call_id
         self.responses: dict[int, str] = {i: "" for i in range(len(HEALTH_QUESTIONS))}
         self.outcome: str | None = None
 
     def _build_call_summary(self) -> dict:
         return {
+            "call_id": self.call_id,
             "patient_name": self.patient["patient_name"],
             "outcome": self.outcome or "incomplete",
             "responses": [
@@ -36,6 +46,26 @@ class CareCaller(Agent):
                 for i in range(len(HEALTH_QUESTIONS))
             ],
         }
+
+    async def _persist_response(self, question_index: int, answer: str) -> None:
+        if not self.call_id:
+            return
+        try:
+            async with async_session() as session:
+                repo = CallRepository(session)
+                await repo.update_response(self.call_id, question_index, answer)
+        except Exception as e:
+            logger.error("Failed to persist response: {e}", e=e)
+
+    async def _persist_outcome(self, outcome: str) -> None:
+        if not self.call_id:
+            return
+        try:
+            async with async_session() as session:
+                repo = CallRepository(session)
+                await repo.set_outcome(self.call_id, outcome)
+        except Exception as e:
+            logger.error("Failed to persist outcome: {e}", e=e)
 
     @function_tool()
     async def record_answer(self, ctx: RunContext, question_index: int, answer: str) -> str:
@@ -52,16 +82,22 @@ class CareCaller(Agent):
             q=HEALTH_QUESTIONS[question_index],
             a=answer,
         )
+        await self._persist_response(question_index, answer)
         return f"Recorded answer for question {question_index + 1}/{len(HEALTH_QUESTIONS)}."
 
     @function_tool()
     async def set_call_outcome(self, ctx: RunContext, outcome: str) -> str:
         """Set the final outcome of this call. Call this BEFORE ending the call.
-        outcome must be one of: completed, incomplete, opted_out, scheduled, escalated, wrong_number, voicemail."""
+
+        outcome must be one of: completed, incomplete, opted_out,
+        scheduled, escalated, wrong_number, voicemail."""
         if outcome not in VALID_OUTCOMES:
-            return f"Invalid outcome '{outcome}'. Must be one of: {', '.join(sorted(VALID_OUTCOMES))}."
+            return (
+                f"Invalid outcome '{outcome}'. Must be one of: {', '.join(sorted(VALID_OUTCOMES))}."
+            )
         self.outcome = outcome
         logger.info("Call outcome set: {outcome}", outcome=outcome)
+        await self._persist_outcome(outcome)
         return f"Outcome set to '{outcome}'."
 
     @function_tool()
@@ -71,11 +107,32 @@ class CareCaller(Agent):
         IMPORTANT: Always call set_call_outcome BEFORE calling end_call."""
         summary = self._build_call_summary()
         logger.info("Call ended. Summary:\n{summary}", summary=json.dumps(summary, indent=2))
-        self.session.generate_reply(
-            instructions="Say a brief, warm goodbye to end the call."
-        )
+        self.session.generate_reply(instructions="Say a brief, warm goodbye to end the call.")
         await ctx.wait_for_playout()
         self.session.shutdown()
+
+
+def _parse_room_metadata(ctx: JobContext) -> tuple[dict, str | None]:
+    """Extract patient info and call_id from room metadata, or fall back to defaults."""
+    try:
+        metadata = json.loads(ctx.room.metadata or "{}")
+        if "patient_name" in metadata:
+            patient = {
+                "patient_name": metadata["patient_name"],
+                "medication": metadata["medication"],
+                "dosage": metadata["dosage"],
+            }
+            call_id = metadata.get("call_id")
+            logger.info(
+                "Loaded patient from room metadata: {name}",
+                name=patient["patient_name"],
+            )
+            return patient, call_id
+    except (json.JSONDecodeError, KeyError) as e:
+        logger.warning("Failed to parse room metadata: {e}", e=e)
+
+    logger.info("Using default patient profile")
+    return DEFAULT_PATIENT, None
 
 
 server = agents.AgentServer()
@@ -91,8 +148,8 @@ async def handle_session(ctx: JobContext):
         turn_detection=MultilingualModel(),
     )
 
-    patient = DEFAULT_PATIENT
-    agent = CareCaller(patient=patient)
+    patient, call_id = _parse_room_metadata(ctx)
+    agent = CareCaller(patient=patient, call_id=call_id)
 
     await session.start(
         room=ctx.room,
@@ -102,11 +159,14 @@ async def handle_session(ctx: JobContext):
     @session.on("close")
     def on_close(*args):
         summary = agent._build_call_summary()
-        logger.info("Session closed. Final summary:\n{summary}", summary=json.dumps(summary, indent=2))
+        logger.info(
+            "Session closed. Final summary:\n{summary}",
+            summary=json.dumps(summary, indent=2),
+        )
+        if agent.call_id and not agent.outcome:
+            asyncio.create_task(agent._persist_outcome("incomplete"))
 
-    await session.generate_reply(
-        instructions=GREETING_PROMPT.format(**patient)
-    )
+    await session.generate_reply(instructions=GREETING_PROMPT.format(**patient))
 
 
 if __name__ == "__main__":

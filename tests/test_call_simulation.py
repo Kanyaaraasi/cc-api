@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 from groq import Groq
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from config import DEFAULT_PATIENT, HEALTH_QUESTIONS
-from prompts import SYSTEM_PROMPT
+from agent.config import DEFAULT_PATIENT, HEALTH_QUESTIONS
+from agent.prompts import SYSTEM_PROMPT
 
 load_dotenv(".env.local")
 
@@ -50,7 +50,8 @@ TOOLS = [
             "name": "set_call_outcome",
             "description": (
                 "Set the final outcome of this call. Call this BEFORE ending the call. "
-                "outcome must be one of: completed, incomplete, opted_out, scheduled, escalated, wrong_number, voicemail."
+                "outcome must be one of: completed, incomplete, opted_out, "
+                "scheduled, escalated, wrong_number, voicemail."
             ),
             "parameters": {
                 "type": "object",
@@ -205,7 +206,7 @@ def run_scenario(name: str, scenario: dict) -> dict:
                     if 0 <= idx < len(HEALTH_QUESTIONS):
                         responses_captured[idx] = ans
                         result = f"Recorded answer for question {idx + 1}/{len(HEALTH_QUESTIONS)}."
-                        print(f"  [TOOL] record_answer(Q{idx}) -> \"{ans}\"")
+                        print(f'  [TOOL] record_answer(Q{idx}) -> "{ans}"')
                     else:
                         result = f"Invalid question_index {idx}."
                         print(f"  [TOOL] record_answer(Q{idx}) -> INVALID INDEX")
@@ -213,18 +214,20 @@ def run_scenario(name: str, scenario: dict) -> dict:
                 elif tool_name == "set_call_outcome":
                     outcome_captured = args["outcome"]
                     result = f"Outcome set to '{outcome_captured}'."
-                    print(f"  [TOOL] set_call_outcome -> \"{outcome_captured}\"")
+                    print(f'  [TOOL] set_call_outcome -> "{outcome_captured}"')
 
                 elif tool_name == "end_call":
                     result = "Call ended."
                     call_ended = True
                     print("  [TOOL] end_call")
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    }
+                )
 
             if call_ended:
                 break
@@ -292,7 +295,12 @@ def run_scenario(name: str, scenario: dict) -> dict:
         print(c)
     print(f"  {'PASSED' if passed else 'FAILED'}")
 
-    return {"name": name, "passed": passed, "outcome": outcome_captured, "answers": num_answers}
+    return {
+        "name": name,
+        "passed": passed,
+        "outcome": outcome_captured,
+        "answers": num_answers,
+    }
 
 
 def main():
