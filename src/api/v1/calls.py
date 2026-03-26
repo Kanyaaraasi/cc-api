@@ -44,7 +44,7 @@ async def start_call(
     repo: CallRepository = Depends(get_repo),
 ):
     call_id = str(uuid.uuid4())
-    room_name = f"call-{call_id[:8]}"
+    room_name = f"call-{call_id}"
 
     await repo.create_call(
         call_id=call_id,
@@ -84,7 +84,7 @@ async def start_call(
     # Generate token for user to join
     token = (
         api.AccessToken()
-        .with_identity(f"user-{call_id[:8]}")
+        .with_identity(f"user-{call_id}")
         .with_name(request.patient_name)
         .with_grants(
             api.VideoGrants(

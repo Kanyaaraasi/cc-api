@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -13,12 +14,40 @@ from livekit.plugins import deepgram, groq, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from loguru import logger
 
-from agent.config import DEFAULT_PATIENT, HEALTH_QUESTIONS
+from agent.config import HEALTH_QUESTIONS
 from agent.prompts import GREETING_PROMPT, SYSTEM_PROMPT
 from db.database import async_session
 from db.repositories import CallRepository
 
 load_dotenv(".env.local")
+
+# Configure colorful logging — intercept stdlib logging into loguru
+
+
+class _LoguruHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        logger.opt(depth=6, exception=record.exc_info).log(level, record.getMessage())
+
+
+logger.remove()
+logger.add(
+    sys.stderr,
+    format=(
+        "<green>{time:HH:mm:ss.SSS}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{name}</cyan> | "
+        "<level>{message}</level>"
+    ),
+    level="DEBUG",
+    colorize=True,
+)
+
+# Route all stdlib logging through loguru
+logging.basicConfig(handlers=[_LoguruHandler()], level=logging.INFO, force=True)
 
 VALID_OUTCOMES = {
     "completed",
@@ -119,50 +148,30 @@ class CareCaller(Agent):
         self.session.shutdown()
 
 
-def _parse_metadata(ctx: JobContext) -> tuple[dict, str | None]:
-    """Extract patient info from dispatch metadata or room metadata."""
-    # 1. Try dispatch metadata via accept_arguments
-    raw = ""
-    try:
-        raw = ctx.job.accept_arguments.metadata or ""
-        if raw:
-            logger.info("Got metadata from accept_arguments")
-    except AttributeError:
-        pass
+async def _load_patient_from_db(ctx: JobContext) -> tuple[dict, str]:
+    """Look up patient info from the database using the room name."""
+    room_name = ctx.room.name
+    prefix = "call-"
+    if not room_name.startswith(prefix):
+        raise ValueError(f"Room name '{room_name}' doesn't match expected 'call-<uuid>' format")
 
-    # 2. Try job.job (protobuf Job object)
-    if not raw:
-        try:
-            raw = ctx.job.job.metadata or ""
-            if raw:
-                logger.info("Got metadata from job.job")
-        except AttributeError:
-            pass
+    call_id = room_name[len(prefix):]
+    logger.info("Looking up call {call_id} from DB", call_id=call_id)
 
-    # 3. Fallback to room metadata
-    if not raw:
-        raw = ctx.room.metadata or ""
-        if raw:
-            logger.info("Got metadata from room")
+    async with async_session() as session:
+        repo = CallRepository(session)
+        record = await repo.get_call(call_id)
 
-    logger.info("Metadata raw: {raw}", raw=repr(raw[:200] if raw else ""))
+    if not record:
+        raise LookupError(f"Call {call_id} not found in database")
 
-    try:
-        metadata = json.loads(raw) if raw else {}
-        if "patient_name" in metadata:
-            patient = {
-                "patient_name": metadata["patient_name"],
-                "medication": metadata["medication"],
-                "dosage": metadata["dosage"],
-            }
-            call_id = metadata.get("call_id")
-            logger.info("Patient: {name}", name=patient["patient_name"])
-            return patient, call_id
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.warning("Failed to parse metadata: {e}", e=e)
-
-    logger.warning("Using default patient profile")
-    return DEFAULT_PATIENT, None
+    patient = {
+        "patient_name": record.patient_name,
+        "medication": record.medication,
+        "dosage": record.dosage,
+    }
+    logger.info("Loaded patient: {name}", name=patient["patient_name"])
+    return patient, call_id
 
 
 server = agents.AgentServer()
@@ -172,13 +181,13 @@ server = agents.AgentServer()
 async def handle_session(ctx: JobContext):
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="en"),
-        llm=groq.LLM(model="meta-llama/llama-4-scout-17b-16e-instruct"),
+        llm=groq.LLM(model="openai/gpt-oss-120b"),
         tts=deepgram.TTS(),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
     )
 
-    patient, call_id = _parse_metadata(ctx)
+    patient, call_id = await _load_patient_from_db(ctx)
     agent = CareCaller(patient=patient, call_id=call_id)
 
     await session.start(

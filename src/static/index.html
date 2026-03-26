@@ -30,6 +30,8 @@
       --success: oklch(0.55 0.17 155);
       --warning: oklch(0.75 0.15 85);
       --info: oklch(0.55 0.15 250);
+      --pink: oklch(0.65 0.18 340);
+      --pink-glow: oklch(0.65 0.18 340 / 12%);
     }
     .dark {
       --background: oklch(0.10 0.005 286);
@@ -48,6 +50,8 @@
       --success: oklch(0.72 0.19 150);
       --warning: oklch(0.80 0.16 85);
       --info: oklch(0.65 0.15 250);
+      --pink: oklch(0.72 0.14 340);
+      --pink-glow: oklch(0.72 0.14 340 / 10%);
     }
     * { box-sizing: border-box; }
     body { background: var(--background); color: var(--foreground); }
@@ -59,6 +63,8 @@
     .fade-up { animation: fadeUp 0.25s ease-out both; }
     .pulse { animation: pulse 1.5s ease-in-out infinite; }
     .progress-fill { transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+    .pink-border-top { border-top: 2px solid var(--pink); }
+    .pink-glow-subtle { box-shadow: 0 0 20px var(--pink-glow), inset 0 1px 0 var(--pink-glow); }
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: var(--secondary); }
     ::-webkit-scrollbar-thumb { background: var(--muted-foreground); border-radius: 2px; }
@@ -75,12 +81,18 @@
   <audio x-ref="agentAudio" autoplay playsinline></audio>
 
   <!-- ═══ STATUS BAR ═══ -->
-  <header class="flex items-center justify-between px-4 py-1.5 border-b" style="border-color: var(--border); background: var(--card);">
-    <div class="flex items-center gap-3">
+  <header class="flex items-center justify-between px-4 py-1.5 border-b relative overflow-hidden" style="border-color: var(--border); background: var(--card);">
+    <!-- Pink glow flare -->
+    <div class="absolute -top-10 -left-10 w-40 h-40 rounded-full opacity-40 blur-3xl pointer-events-none" style="background: var(--pink-glow);"></div>
+    <div class="absolute -top-10 -right-20 w-60 h-40 rounded-full opacity-20 blur-3xl pointer-events-none" style="background: var(--pink-glow);"></div>
+    <div class="flex items-center gap-3 relative">
       <div class="flex items-center gap-2">
-        <img src="https://cdn.jsdelivr.net/npm/remixicon@4.9.1/icons/Health%20%26%20Medical/heart-pulse-line.svg"
-             class="w-5 h-5" :class="isDark ? 'invert' : ''" style="filter: var(--primary);">
-        <span class="font-bold text-sm tracking-tight" style="color: var(--primary);">CareCaller</span>
+        <!-- Inline SVG logo — colors with CSS -->
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--pink);">
+          <path d="M19.5 12.572l-7.5 7.428l-7.5 -7.428a5 5 0 1 1 7.5 -6.566a5 5 0 1 1 7.5 6.572"/>
+          <path d="M3 10h6l1 -2l2 4l1 -2h6"/>
+        </svg>
+        <span class="font-bold text-sm tracking-tight" style="color: var(--pink);">CareCaller</span>
         <span class="mono text-[10px] px-1.5 py-0.5 rounded" style="background: var(--secondary); color: var(--muted-foreground);">v1.0</span>
       </div>
       <div class="h-3 w-px" style="background: var(--border);"></div>
@@ -112,7 +124,9 @@
   </header>
 
   <!-- ═══ CONTROL BAR ═══ -->
-  <div class="flex items-center gap-3 px-4 py-2 border-b" style="border-color: var(--border); background: var(--card);">
+  <div class="flex items-center gap-3 px-4 py-2 border-b"
+       :class="connected ? 'pink-glow-subtle' : ''"
+       style="border-color: var(--border); background: var(--card);">
     <div class="flex items-center gap-2 flex-1">
       <span class="text-[11px] font-medium uppercase tracking-wider" style="color: var(--muted-foreground);">Patient</span>
       <select class="mono text-xs rounded px-2 py-1.5 min-w-[220px]"
