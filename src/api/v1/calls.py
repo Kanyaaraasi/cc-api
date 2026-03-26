@@ -1,4 +1,3 @@
-import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -54,29 +53,12 @@ async def start_call(
         dosage=request.dosage,
     )
 
-    room_metadata = json.dumps(
-        {
-            "call_id": call_id,
-            "patient_name": request.patient_name,
-            "medication": request.medication,
-            "dosage": request.dosage,
-        }
-    )
-
-    # Create room with metadata, then dispatch agent explicitly
+    # Create room — agent auto-joins via rtc_session registration
     lk_api = api.LiveKitAPI()
     await lk_api.room.create_room(
         api.CreateRoomRequest(
             name=room_name,
-            metadata=room_metadata,
             max_participants=2,
-        )
-    )
-    await lk_api.agent_dispatch.create_dispatch(
-        api.CreateAgentDispatchRequest(
-            room=room_name,
-            agent_name="carecaller",
-            metadata=room_metadata,
         )
     )
     await lk_api.aclose()

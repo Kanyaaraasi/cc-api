@@ -205,7 +205,7 @@ async def handle_session(ctx: JobContext):
         if agent.call_id and not agent.outcome:
             asyncio.create_task(agent._persist_outcome("incomplete"))
 
-    await session.generate_reply(instructions=GREETING_PROMPT.format(**patient))
+    await session.generate_reply()
 
 
 if __name__ == "__main__":
