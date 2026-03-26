@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CareCaller — Voice Agent Terminal</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style type="text/tailwindcss">
+    @theme {
+      --font-sans: 'Figtree', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    :root {
+      --background: oklch(0.98 0.001 286);
+      --foreground: oklch(0.141 0.005 285.823);
+      --card: oklch(1 0 0);
+      --primary: oklch(0.525 0.223 3.958);
+      --secondary: oklch(0.95 0.002 286);
+      --muted: oklch(0.93 0.003 286);
+      --muted-foreground: oklch(0.50 0.016 285.938);
+      --destructive: oklch(0.577 0.245 27.325);
+      --border: oklch(0.88 0.004 286);
+      --chart-1: oklch(0.55 0.17 155);
+      --chart-2: oklch(0.50 0.16 150);
+      --chart-3: oklch(0.45 0.14 149);
+      --chart-4: oklch(0.60 0.12 50);
+      --success: oklch(0.55 0.17 155);
+      --warning: oklch(0.75 0.15 85);
+      --info: oklch(0.55 0.15 250);
+    }
+    .dark {
+      --background: oklch(0.10 0.005 286);
+      --foreground: oklch(0.92 0.005 286);
+      --card: oklch(0.14 0.005 286);
+      --primary: oklch(0.65 0.22 4);
+      --secondary: oklch(0.18 0.005 286);
+      --muted: oklch(0.22 0.006 286);
+      --muted-foreground: oklch(0.55 0.01 286);
+      --destructive: oklch(0.65 0.22 25);
+      --border: oklch(0.25 0.006 286);
+      --chart-1: oklch(0.72 0.19 150);
+      --chart-2: oklch(0.60 0.17 150);
+      --chart-3: oklch(0.50 0.14 149);
+      --chart-4: oklch(0.70 0.14 60);
+      --success: oklch(0.72 0.19 150);
+      --warning: oklch(0.80 0.16 85);
+      --info: oklch(0.65 0.15 250);
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--background); color: var(--foreground); }
+    .panel { background: var(--card); border: 1px solid var(--border); }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    @keyframes scanline { 0% { background-position: 0 0; } 100% { background-position: 0 4px; } }
+    .fade-up { animation: fadeUp 0.25s ease-out both; }
+    .pulse { animation: pulse 1.5s ease-in-out infinite; }
+    .progress-fill { transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: var(--secondary); }
+    ::-webkit-scrollbar-thumb { background: var(--muted-foreground); border-radius: 2px; }
+    select, button { cursor: pointer; }
+    select { background: var(--secondary); color: var(--foreground); border: 1px solid var(--border); }
+    .log-debug { color: var(--muted-foreground); }
+    .log-info { color: var(--info); }
+    .log-warning { color: var(--warning); }
+    .log-error { color: var(--destructive); }
+  </style>
+</head>
+
+<body class="h-screen flex flex-col overflow-hidden font-sans" x-data="app()" x-init="init()">
+  <audio x-ref="agentAudio" autoplay playsinline></audio>
+
+  <!-- ═══ STATUS BAR ═══ -->
+  <header class="flex items-center justify-between px-4 py-1.5 border-b" style="border-color: var(--border); background: var(--card);">
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <img src="https://cdn.jsdelivr.net/npm/remixicon@4.9.1/icons/Health%20%26%20Medical/heart-pulse-line.svg"
+             class="w-5 h-5" :class="isDark ? 'invert' : ''" style="filter: var(--primary);">
+        <span class="font-bold text-sm tracking-tight" style="color: var(--primary);">CareCaller</span>
+        <span class="mono text-[10px] px-1.5 py-0.5 rounded" style="background: var(--secondary); color: var(--muted-foreground);">v1.0</span>
+      </div>
+      <div class="h-3 w-px" style="background: var(--border);"></div>
+      <div class="flex items-center gap-1.5">
+        <div class="w-2 h-2 rounded-full"
+             :class="connected ? '' : (connecting ? 'pulse' : '')"
+             :style="connected ? 'background: var(--success)' : (connecting ? 'background: var(--warning)' : 'background: var(--muted-foreground)')"></div>
+        <span class="mono text-xs" style="color: var(--muted-foreground);"
+              x-text="connected ? 'CONNECTED' : (connecting ? 'CONNECTING...' : 'IDLE')"></span>
+      </div>
+      <div class="h-3 w-px" style="background: var(--border);"></div>
+      <span class="mono text-xs tabular-nums" style="color: var(--muted-foreground);" x-text="formatDuration(duration)"></span>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-1.5" x-show="systemInfo">
+        <span class="mono text-[10px]" style="color: var(--muted-foreground);">LLM</span>
+        <span class="mono text-[10px] px-1.5 py-0.5 rounded" style="background: var(--secondary); color: var(--chart-1);" x-text="systemInfo?.llm?.model?.split('/')?.pop() || ''"></span>
+        <span class="mono text-[10px]" style="color: var(--muted-foreground);">STT</span>
+        <span class="mono text-[10px] px-1.5 py-0.5 rounded" style="background: var(--secondary); color: var(--chart-4);" x-text="systemInfo?.stt?.model || ''"></span>
+      </div>
+      <div class="h-3 w-px" style="background: var(--border);"></div>
+      <button @click="toggleTheme()" class="p-1 rounded transition-colors" style="color: var(--muted-foreground);"
+              :title="isDark ? 'Light mode' : 'Dark mode'">
+        <svg x-show="isDark" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <svg x-show="!isDark" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ═══ CONTROL BAR ═══ -->
+  <div class="flex items-center gap-3 px-4 py-2 border-b" style="border-color: var(--border); background: var(--card);">
+    <div class="flex items-center gap-2 flex-1">
+      <span class="text-[11px] font-medium uppercase tracking-wider" style="color: var(--muted-foreground);">Patient</span>
+      <select class="mono text-xs rounded px-2 py-1.5 min-w-[220px]"
+              x-model="selectedPatientIdx"
+              :disabled="connected || connecting">
+        <option value="">— select patient —</option>
+        <template x-for="(p, idx) in patients" :key="p.call_id">
+          <option :value="idx" x-text="`${p.patient_name} — ${p.medication}`"></option>
+        </template>
+      </select>
+    </div>
+
+    <template x-if="selectedPatient">
+      <div class="flex items-center gap-2">
+        <span class="mono text-[11px] px-2 py-1 rounded" style="background: var(--secondary); color: var(--chart-1);" x-text="selectedPatient.medication"></span>
+        <span class="mono text-[11px] px-2 py-1 rounded" style="background: var(--secondary); color: var(--chart-4);" x-text="selectedPatient.dosage"></span>
+      </div>
+    </template>
+
+    <div class="flex items-center gap-2">
+      <template x-if="connected">
+        <button @click="toggleMic()"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded font-medium transition-all"
+                :style="micEnabled ? 'background: var(--success); color: #000;' : 'background: var(--muted); color: var(--foreground);'"
+                :title="micEnabled ? 'Click to mute' : 'Click to unmute'">
+          <!-- Mic icon -->
+          <svg x-show="micEnabled" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+          <!-- Muted icon -->
+          <svg x-show="!micEnabled" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" x2="22" y1="2" y2="22"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+          <!-- Level meter bars -->
+          <div class="flex items-end gap-px h-4" x-show="micEnabled">
+            <div class="w-[3px] rounded-sm transition-all duration-100"
+                 :style="`height: ${Math.max(2, audioLevel * 16)}px; background: currentColor; opacity: ${audioLevel > 0.05 ? 1 : 0.3};`"></div>
+            <div class="w-[3px] rounded-sm transition-all duration-100"
+                 :style="`height: ${Math.max(2, audioLevel * 12)}px; background: currentColor; opacity: ${audioLevel > 0.15 ? 1 : 0.3};`"></div>
+            <div class="w-[3px] rounded-sm transition-all duration-100"
+                 :style="`height: ${Math.max(2, audioLevel * 14)}px; background: currentColor; opacity: ${audioLevel > 0.1 ? 1 : 0.3};`"></div>
+            <div class="w-[3px] rounded-sm transition-all duration-100"
+                 :style="`height: ${Math.max(2, audioLevel * 10)}px; background: currentColor; opacity: ${audioLevel > 0.2 ? 1 : 0.3};`"></div>
+          </div>
+        </button>
+      </template>
+
+      <button @click="connected ? endCall() : startCall()"
+              :disabled="connecting || (!selectedPatient && !connected)"
+              class="mono text-[11px] px-4 py-1.5 rounded font-bold transition-all disabled:opacity-30"
+              :style="connected ? 'background: var(--destructive); color: #fff;' : 'background: var(--primary); color: #fff;'">
+        <span x-text="connected ? 'END CALL' : (connecting ? 'CONNECTING...' : 'START CALL')"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══ MAIN PANELS ═══ -->
+  <div class="flex-1 flex overflow-hidden">
+
+    <!-- LEFT: TRANSCRIPT -->
+    <div class="flex-1 flex flex-col border-r" style="border-color: var(--border);">
+      <div class="flex items-center justify-between px-3 py-1.5 border-b" style="border-color: var(--border); background: var(--secondary);">
+        <span class="text-[10px] font-bold uppercase tracking-[0.15em]" style="color: var(--muted-foreground);">Live Transcript</span>
+        <span class="mono text-[10px]" style="color: var(--muted-foreground);" x-text="`${transcript.length} turns`"></span>
+      </div>
+      <div class="flex-1 overflow-y-auto p-3 space-y-2" x-ref="transcriptPanel">
+        <template x-if="transcript.length === 0">
+          <div class="flex items-center justify-center h-full">
+            <span class="text-sm" style="color: var(--muted-foreground);">Waiting for call to start...</span>
+          </div>
+        </template>
+        <template x-for="(t, i) in transcript" :key="i">
+          <div class="fade-up" :style="'animation-delay:' + (i * 0.03) + 's'">
+            <div class="flex items-start gap-2">
+              <span class="mono text-[10px] mt-0.5 shrink-0 w-10 text-right tabular-nums" style="color: var(--muted-foreground);" x-text="t.time"></span>
+              <span class="mono text-[10px] font-bold shrink-0 w-12"
+                    :style="t.role === 'agent' ? 'color: var(--primary)' : 'color: var(--chart-1)'"
+                    x-text="t.role === 'agent' ? 'AGENT' : 'USER'"></span>
+              <span class="text-xs leading-relaxed" x-text="t.message"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- RIGHT: QUESTIONNAIRE -->
+    <div class="flex-1 flex flex-col">
+      <div class="flex items-center justify-between px-3 py-1.5 border-b" style="border-color: var(--border); background: var(--secondary);">
+        <span class="text-[10px] font-bold uppercase tracking-[0.15em]" style="color: var(--muted-foreground);">Questionnaire</span>
+        <span class="mono text-[10px] tabular-nums"
+              :style="answeredCount === 14 ? 'color: var(--success)' : 'color: var(--muted-foreground)'"
+              x-text="`${answeredCount}/14`"></span>
+      </div>
+      <div class="flex-1 overflow-y-auto p-3 space-y-1">
+        <template x-for="(r, i) in responses" :key="i">
+          <div class="flex items-start gap-2 px-2 py-1.5 rounded transition-colors"
+               :style="r.answer ? 'background: var(--secondary)' : ''">
+            <span class="shrink-0 mt-0.5" x-text="r.answer ? '●' : '○'"
+                  :style="r.answer ? 'color: var(--success)' : 'color: var(--muted-foreground)'"
+                  class="mono text-[10px]"></span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-baseline gap-2">
+                <span class="mono text-[10px] shrink-0 tabular-nums" style="color: var(--muted-foreground);" x-text="`Q${i+1}`"></span>
+                <span class="text-xs truncate" :style="r.answer ? 'color: var(--foreground)' : 'color: var(--muted-foreground)'" x-text="shortQuestion(r.question)"></span>
+              </div>
+              <template x-if="r.answer">
+                <div class="mono text-[11px] mt-0.5 pl-6" style="color: var(--chart-1);" x-text="'→ ' + r.answer"></div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+      <!-- PROGRESS BAR -->
+      <div class="px-3 py-2 border-t" style="border-color: var(--border);">
+        <div class="flex items-center gap-2">
+          <div class="flex-1 h-1.5 rounded-full" style="background: var(--muted);">
+            <div class="h-full rounded-full progress-fill"
+                 :style="`width: ${(answeredCount / 14) * 100}%; background: ${answeredCount === 14 ? 'var(--success)' : 'var(--primary)'};`"></div>
+          </div>
+          <template x-if="outcome">
+            <span class="mono text-[10px] font-bold px-2 py-0.5 rounded"
+                  :style="outcome === 'completed' ? 'background: var(--success); color: #000;' : 'background: var(--warning); color: #000;'"
+                  x-text="outcome.toUpperCase()"></span>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ LOG STREAM ═══ -->
+  <div class="border-t" style="border-color: var(--border);">
+    <div class="flex items-center justify-between px-3 py-1 border-b cursor-pointer" @click="logsOpen = !logsOpen"
+         style="border-color: var(--border); background: var(--secondary);">
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] font-bold uppercase tracking-[0.15em]" style="color: var(--muted-foreground);">System Log</span>
+        <span class="mono text-[10px]" style="color: var(--muted-foreground);" x-text="`${logs.length} events`"></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <select class="mono text-[10px] rounded px-1.5 py-0.5" style="background: var(--card); border-color: var(--border);"
+                x-model="logLevel" @click.stop @change="reconnectSSE()">
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="WARNING">WARN</option>
+          <option value="ERROR">ERROR</option>
+        </select>
+        <span class="text-[10px] transition-transform" :class="logsOpen ? '' : '-rotate-90'" style="color: var(--muted-foreground);">▼</span>
+      </div>
+    </div>
+    <div x-show="logsOpen" x-transition class="overflow-y-auto font-mono text-[11px] leading-snug" style="max-height: 140px; background: var(--card);" x-ref="logPanel">
+      <template x-if="logs.length === 0">
+        <div class="px-3 py-2" style="color: var(--muted-foreground);">Waiting for events...</div>
+      </template>
+      <template x-for="(log, i) in logs" :key="i">
+        <div class="flex items-baseline gap-3 px-3 py-0.5 border-b" style="border-color: var(--border);">
+          <span class="shrink-0 tabular-nums" style="color: var(--muted-foreground);" x-text="log.timestamp?.split('T')[1]?.substring(0, 12) || ''"></span>
+          <span class="shrink-0 w-12 font-bold"
+                :class="'log-' + log.level?.toLowerCase()"
+                x-text="log.level"></span>
+          <span class="truncate" style="color: var(--foreground);" x-text="log.message"></span>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <script>
+    // Keep LiveKit Room outside Alpine's reactive proxy — it has non-cloneable internals
+    let _room = null;
+    let _durationInterval = null;
+    let _pollInterval = null;
+    let _eventSource = null;
+    let _audioContext = null;
+    let _analyser = null;
+    let _audioLevelRAF = null;
+
+    function app() {
+      return {
+        // Theme
+        isDark: true,
+
+        // Connection
+        connected: false,
+        connecting: false,
+        micEnabled: false,
+        audioLevel: 0,
+        duration: 0,
+
+        // Data
+        patients: [],
+        selectedPatientIdx: '',
+        callId: null,
+        roomName: null,
+        outcome: null,
+        systemInfo: null,
+        livekitUrl: '',
+
+        // Transcript
+        transcript: [],
+
+        // Q&A
+        responses: Array.from({ length: 14 }, () => ({ question: '', answer: '' })),
+        answeredCount: 0,
+
+        // Logs
+        logs: [],
+        logLevel: 'INFO',
+        logsOpen: true,
+
+        get selectedPatient() {
+          return this.selectedPatientIdx !== '' ? this.patients[this.selectedPatientIdx] : null;
+        },
+
+        async init() {
+          // Theme
+          const saved = localStorage.getItem('cc-theme');
+          this.isDark = saved ? saved === 'dark' : true;
+          document.documentElement.classList.toggle('dark', this.isDark);
+
+          // Fetch config + patients + system info
+          const [configRes, patientsRes, sysRes] = await Promise.all([
+            fetch('/api/v1/config').then(r => r.json()),
+            fetch('/api/v1/patients?limit=100').then(r => r.json()),
+            fetch('/api/v1/logs/system').then(r => r.json()),
+          ]);
+          this.livekitUrl = configRes.livekit_url;
+          this.patients = patientsRes;
+          this.systemInfo = sysRes;
+
+          this.connectSSE();
+        },
+
+        toggleTheme() {
+          this.isDark = !this.isDark;
+          document.documentElement.classList.toggle('dark', this.isDark);
+          localStorage.setItem('cc-theme', this.isDark ? 'dark' : 'light');
+        },
+
+        connectSSE() {
+          if (_eventSource) _eventSource.close();
+          _eventSource = new EventSource(`/api/v1/logs/stream?level=${this.logLevel}`);
+          _eventSource.addEventListener('log', (e) => {
+            const entry = JSON.parse(e.data);
+            this.logs.push(entry);
+            if (this.logs.length > 200) this.logs.shift();
+            this.$nextTick(() => {
+              if (this.$refs.logPanel) this.$refs.logPanel.scrollTop = this.$refs.logPanel.scrollHeight;
+            });
+          });
+        },
+
+        reconnectSSE() {
+          this.logs = [];
+          this.connectSSE();
+        },
+
+        async startCall() {
+          if (!this.selectedPatient || this.connecting) return;
+          this.connecting = true;
+          this.transcript = [];
+          this.outcome = null;
+          this.duration = 0;
+
+          try {
+            // Create call via API
+            const callRes = await fetch('/api/v1/calls', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                patient_name: this.selectedPatient.patient_name,
+                medication: this.selectedPatient.medication,
+                dosage: this.selectedPatient.dosage,
+              }),
+            }).then(r => r.json());
+
+            this.callId = callRes.call_id;
+            this.roomName = callRes.room_name;
+
+            // Connect to LiveKit — room kept outside Alpine proxy
+            _room = new LivekitClient.Room();
+            const audioEl = this.$refs.agentAudio;
+            const self = this;
+
+            _room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+              if (track.kind === 'audio') {
+                track.attach(audioEl);
+              }
+            });
+
+            const localIdentity = `user-${callRes.call_id.substring(0, 8)}`;
+
+            _room.on(LivekitClient.RoomEvent.TranscriptionReceived, (segments) => {
+              segments.forEach(seg => {
+                // If participant is NOT the local user, it's the agent
+                const role = seg.participant?.identity === localIdentity ? 'user' : 'agent';
+                const lastIdx = self.findLastTranscriptIdx(seg.id);
+                if (lastIdx >= 0) {
+                  self.transcript[lastIdx].message = seg.text;
+                  self.transcript[lastIdx].final = seg.final;
+                } else {
+                  self.transcript.push({
+                    role,
+                    message: seg.text,
+                    time: self.formatDuration(self.duration),
+                    id: seg.id,
+                    final: seg.final,
+                  });
+                }
+              });
+              self.$nextTick(() => {
+                const panel = self.$refs.transcriptPanel;
+                if (panel) panel.scrollTop = panel.scrollHeight;
+              });
+            });
+
+            _room.on(LivekitClient.RoomEvent.Disconnected, () => {
+              self.pollCallData();
+              self.handleDisconnect();
+            });
+
+            _room.on(LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
+              // If agent disconnects, end the call on UI side too
+              if (participant.identity !== localIdentity) {
+                self.pollCallData();
+                setTimeout(() => self.handleDisconnect(), 1000);
+              }
+            });
+
+            _room.on(LivekitClient.RoomEvent.AudioPlaybackStatusChanged, (canPlay) => {
+              if (!canPlay) document.addEventListener('click', () => _room?.startAudio(), { once: true });
+            });
+
+            await _room.connect(this.livekitUrl, callRes.token);
+            await _room.localParticipant.setMicrophoneEnabled(true);
+
+            this.connected = true;
+            this.connecting = false;
+            this.micEnabled = true;
+
+            // Start audio level monitoring
+            this.startAudioMonitor();
+
+            // Start duration timer
+            _durationInterval = setInterval(() => this.duration++, 1000);
+
+            // Start polling for Q&A updates
+            this.startPolling();
+
+          } catch (err) {
+            console.error('Failed to start call:', err);
+            this.connecting = false;
+          }
+        },
+
+        async endCall() {
+          if (_room) {
+            await _room.disconnect();
+          }
+          this.handleDisconnect();
+        },
+
+        handleDisconnect() {
+          this.connected = false;
+          this.connecting = false;
+          this.micEnabled = false;
+          this.audioLevel = 0;
+          this.stopAudioMonitor();
+          if (_durationInterval) clearInterval(_durationInterval);
+          if (_pollInterval) clearInterval(_pollInterval);
+          _room = null;
+          // Final poll to get outcome
+          if (this.callId) this.pollCallData();
+        },
+
+        async toggleMic() {
+          if (!_room) return;
+          this.micEnabled = !this.micEnabled;
+          await _room.localParticipant.setMicrophoneEnabled(this.micEnabled);
+          if (this.micEnabled) {
+            this.startAudioMonitor();
+          } else {
+            this.stopAudioMonitor();
+            this.audioLevel = 0;
+          }
+        },
+
+        startAudioMonitor() {
+          try {
+            const track = _room?.localParticipant?.getTrackPublication('microphone')?.track;
+            if (!track?.mediaStreamTrack) return;
+            _audioContext = new AudioContext();
+            const source = _audioContext.createMediaStreamSource(new MediaStream([track.mediaStreamTrack]));
+            _analyser = _audioContext.createAnalyser();
+            _analyser.fftSize = 256;
+            source.connect(_analyser);
+            const data = new Uint8Array(_analyser.frequencyBinCount);
+            const self = this;
+            function tick() {
+              _analyser.getByteFrequencyData(data);
+              let sum = 0;
+              for (let i = 0; i < data.length; i++) sum += data[i];
+              self.audioLevel = Math.min(1, (sum / data.length) / 128);
+              _audioLevelRAF = requestAnimationFrame(tick);
+            }
+            tick();
+          } catch (e) {
+            console.warn('Audio monitor failed:', e);
+          }
+        },
+
+        stopAudioMonitor() {
+          if (_audioLevelRAF) cancelAnimationFrame(_audioLevelRAF);
+          if (_audioContext) _audioContext.close().catch(() => {});
+          _audioContext = null;
+          _analyser = null;
+          _audioLevelRAF = null;
+        },
+
+        startPolling() {
+          this.pollCallData();
+          _pollInterval = setInterval(() => this.pollCallData(), 2000);
+        },
+
+        async pollCallData() {
+          if (!this.callId) return;
+          try {
+            const data = await fetch(`/api/v1/calls/${this.callId}`).then(r => r.json());
+            if (data.responses) {
+              this.responses = data.responses;
+              this.answeredCount = data.responses.filter(r => r.answer).length;
+            }
+            if (data.outcome) {
+              this.outcome = data.outcome;
+            }
+          } catch (e) {
+            // ignore polling errors
+          }
+        },
+
+        findLastTranscriptIdx(segId) {
+          for (let i = this.transcript.length - 1; i >= 0; i--) {
+            if (this.transcript[i].id === segId) return i;
+          }
+          return -1;
+        },
+
+        formatDuration(s) {
+          const m = Math.floor(s / 60);
+          const sec = s % 60;
+          return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+        },
+
+        shortQuestion(q) {
+          return q.replace(/^(How |What's |Any |Have |Do |Has |Are )/, '').replace(/\?$/, '');
+        },
+      };
+    }
+  </script>
+</body>
+</html>

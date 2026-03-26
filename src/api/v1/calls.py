@@ -63,6 +63,25 @@ async def start_call(
         }
     )
 
+    # Create room with metadata, then dispatch agent explicitly
+    lk_api = api.LiveKitAPI()
+    await lk_api.room.create_room(
+        api.CreateRoomRequest(
+            name=room_name,
+            metadata=room_metadata,
+            max_participants=2,
+        )
+    )
+    await lk_api.agent_dispatch.create_dispatch(
+        api.CreateAgentDispatchRequest(
+            room=room_name,
+            agent_name="carecaller",
+            metadata=room_metadata,
+        )
+    )
+    await lk_api.aclose()
+
+    # Generate token for user to join
     token = (
         api.AccessToken()
         .with_identity(f"user-{call_id[:8]}")
@@ -71,11 +90,6 @@ async def start_call(
             api.VideoGrants(
                 room_join=True,
                 room=room_name,
-            )
-        )
-        .with_room_config(
-            api.RoomConfiguration(
-                metadata=room_metadata,
             )
         )
         .to_jwt()

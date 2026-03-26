@@ -1,7 +1,11 @@
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
 
 from api.middleware import RequestIDMiddleware
 from api.v1.calls import router as calls_router
@@ -11,6 +15,8 @@ from api.v1.patients import router as patients_router
 from db.database import init_db
 
 load_dotenv(".env.local")
+
+static_dir = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -28,6 +34,19 @@ app.include_router(patients_router, prefix="/api/v1")
 app.include_router(logs_router, prefix="/api/v1")
 
 
+@app.get("/")
+async def dashboard():
+    return FileResponse(static_dir / "index.html")
+
+
+@app.get("/api/v1/config")
+async def get_config():
+    return {"livekit_url": os.getenv("LIVEKIT_URL", "")}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+app.mount("/static", StaticFiles(directory=static_dir), name="static")

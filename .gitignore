@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
+.playwright-mcp
+.pytest_cache
+.ruff_cache
+
 data
 .claude
 

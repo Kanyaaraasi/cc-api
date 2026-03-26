@@ -1,5 +1,10 @@
 import asyncio
 import json
+import sys
+from pathlib import Path
+
+# Ensure src/ is on the path so package imports work
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
 from livekit import agents
@@ -102,20 +107,48 @@ class CareCaller(Agent):
 
     @function_tool()
     async def end_call(self, ctx: RunContext) -> None:
-        """End the call. Use this when the conversation is complete, the patient opts out,
-        it's a wrong number, or the patient wants to hang up.
+        """End the call and disconnect silently.
+        Use this AFTER you have already said your goodbye to the patient.
+        Do NOT say anything after calling this — just end the call.
         IMPORTANT: Always call set_call_outcome BEFORE calling end_call."""
         summary = self._build_call_summary()
-        logger.info("Call ended. Summary:\n{summary}", summary=json.dumps(summary, indent=2))
-        self.session.generate_reply(instructions="Say a brief, warm goodbye to end the call.")
-        await ctx.wait_for_playout()
+        logger.info(
+            "Call ended. Summary:\n{summary}",
+            summary=json.dumps(summary, indent=2),
+        )
         self.session.shutdown()
 
 
-def _parse_room_metadata(ctx: JobContext) -> tuple[dict, str | None]:
-    """Extract patient info and call_id from room metadata, or fall back to defaults."""
+def _parse_metadata(ctx: JobContext) -> tuple[dict, str | None]:
+    """Extract patient info from dispatch metadata or room metadata."""
+    # 1. Try dispatch metadata via accept_arguments
+    raw = ""
     try:
-        metadata = json.loads(ctx.room.metadata or "{}")
+        raw = ctx.job.accept_arguments.metadata or ""
+        if raw:
+            logger.info("Got metadata from accept_arguments")
+    except AttributeError:
+        pass
+
+    # 2. Try job.job (protobuf Job object)
+    if not raw:
+        try:
+            raw = ctx.job.job.metadata or ""
+            if raw:
+                logger.info("Got metadata from job.job")
+        except AttributeError:
+            pass
+
+    # 3. Fallback to room metadata
+    if not raw:
+        raw = ctx.room.metadata or ""
+        if raw:
+            logger.info("Got metadata from room")
+
+    logger.info("Metadata raw: {raw}", raw=repr(raw[:200] if raw else ""))
+
+    try:
+        metadata = json.loads(raw) if raw else {}
         if "patient_name" in metadata:
             patient = {
                 "patient_name": metadata["patient_name"],
@@ -123,15 +156,12 @@ def _parse_room_metadata(ctx: JobContext) -> tuple[dict, str | None]:
                 "dosage": metadata["dosage"],
             }
             call_id = metadata.get("call_id")
-            logger.info(
-                "Loaded patient from room metadata: {name}",
-                name=patient["patient_name"],
-            )
+            logger.info("Patient: {name}", name=patient["patient_name"])
             return patient, call_id
     except (json.JSONDecodeError, KeyError) as e:
-        logger.warning("Failed to parse room metadata: {e}", e=e)
+        logger.warning("Failed to parse metadata: {e}", e=e)
 
-    logger.info("Using default patient profile")
+    logger.warning("Using default patient profile")
     return DEFAULT_PATIENT, None
 
 
@@ -148,7 +178,7 @@ async def handle_session(ctx: JobContext):
         turn_detection=MultilingualModel(),
     )
 
-    patient, call_id = _parse_room_metadata(ctx)
+    patient, call_id = _parse_metadata(ctx)
     agent = CareCaller(patient=patient, call_id=call_id)
 
     await session.start(
