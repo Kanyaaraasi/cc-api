@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -9,7 +10,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
 from livekit import agents
-from livekit.agents import Agent, AgentSession, JobContext, RunContext, function_tool
+from collections.abc import AsyncIterable
+
+from livekit.agents import Agent, AgentSession, JobContext, ModelSettings, RunContext, function_tool
 from livekit.plugins import deepgram, groq, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from loguru import logger
@@ -147,6 +150,13 @@ class CareCaller(Agent):
         )
         self.session.shutdown()
 
+    async def _strip_md_stream(self, text: AsyncIterable[str]) -> AsyncIterable[str]:
+        async for chunk in text:
+            yield strip_markdown(chunk)
+
+    def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):
+        return Agent.default.tts_node(self, self._strip_md_stream(text), model_settings)
+
 
 async def _load_patient_from_db(ctx: JobContext) -> tuple[dict, str]:
     """Look up patient info from the database using the room name."""
@@ -172,6 +182,13 @@ async def _load_patient_from_db(ctx: JobContext) -> tuple[dict, str]:
     }
     logger.info("Loaded patient: {name}", name=patient["patient_name"])
     return patient, call_id
+
+
+_MD_PATTERNS = re.compile(r"\*{1,3}|`{1,3}|^#{1,6}\s|^[-*]\s|^\d+\.\s", re.MULTILINE)
+
+
+def strip_markdown(text: str) -> str:
+    return _MD_PATTERNS.sub("", text).strip()
 
 
 server = agents.AgentServer()

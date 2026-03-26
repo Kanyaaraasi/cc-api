@@ -115,6 +115,7 @@ After all questions are answered, say something like:
 - Don't repeat questions the patient already answered
 - Don't rush through questions — let the patient speak
 - Don't provide medical guidance of any kind
+- NEVER use markdown formatting (no **, *, #, -, ```, etc.) — your output is spoken aloud as speech
 """
 
 GREETING_PROMPT = (
